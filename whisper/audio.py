@@ -23,14 +23,14 @@ FRAMES_PER_SECOND = exact_div(SAMPLE_RATE, HOP_LENGTH)  # 10ms per audio frame
 TOKENS_PER_SECOND = exact_div(SAMPLE_RATE, N_SAMPLES_PER_TOKEN)  # 20ms per audio token
 
 
-def load_audio(file: str, sr: int = SAMPLE_RATE):
+def load_audio(file: (str, bytes), sr: int = 16000):
     """
     Open an audio file and read as mono waveform, resampling as necessary
 
     Parameters
     ----------
-    file: str
-        The audio file to open
+    file: (str, bytes)
+        The audio file to open or bytes of audio file
 
     sr: int
         The sample rate to resample the audio if necessary
@@ -39,25 +39,22 @@ def load_audio(file: str, sr: int = SAMPLE_RATE):
     -------
     A NumPy array containing the audio waveform, in float32 dtype.
     """
-
-    # This launches a subprocess to decode audio while down-mixing
-    # and resampling as necessary.  Requires the ffmpeg CLI in PATH.
-    # fmt: off
-    cmd = [
-        "ffmpeg",
-        "-nostdin",
-        "-threads", "0",
-        "-i", file,
-        "-f", "s16le",
-        "-ac", "1",
-        "-acodec", "pcm_s16le",
-        "-ar", str(sr),
-        "-"
-    ]
-    # fmt: on
+    
+    if isinstance(file, bytes):
+        inp = file
+        file = 'pipe:'
+    else:
+        inp = None
+    
     try:
-        out = run(cmd, capture_output=True, check=True).stdout
-    except CalledProcessError as e:
+        # This launches a subprocess to decode audio while down-mixing and resampling as necessary.
+        # Requires the ffmpeg CLI and `ffmpeg-python` package to be installed.
+        out, _ = (
+            ffmpeg.input(file, threads=0)
+            .output("-", format="s16le", acodec="pcm_s16le", ac=1, ar=sr)
+            .run(cmd="ffmpeg", capture_stdout=True, capture_stderr=True, input=inp)
+        )
+    except ffmpeg.Error as e:
         raise RuntimeError(f"Failed to load audio: {e.stderr.decode()}") from e
 
     return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
